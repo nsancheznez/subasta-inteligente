@@ -1,6 +1,3 @@
-Claro, acá tenés solo el bloque `README.md` listo para copiar y pegar:
-
-
 # 🧾 Subasta Smart Contract
 
 Este contrato inteligente implementa una subasta con extensión automática del tiempo, devolución de excedentes y verificación de ganador. Desarrollado en Solidity para Ethereum o redes compatibles con EVM.

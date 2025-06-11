@@ -1,47 +1,139 @@
-# Subasta en Solidity
+Claro, acá tenés solo el bloque `README.md` listo para copiar y pegar:
 
-## 1. Descripción funcional del contrato
 
-Este contrato implementa una subasta pública en la cual los usuarios pueden realizar ofertas durante un tiempo limitado. La subasta se inicializa con una duración dada y finaliza una vez transcurrido ese tiempo. El mejor postor al finalizar la subasta es considerado el ganador. Se permite retirar las ofertas previas a quienes hayan sido superados.
+# 🧾 Subasta Smart Contract
 
-## 2. Variables de estado utilizadas
+Este contrato inteligente implementa una subasta con extensión automática del tiempo, devolución de excedentes y verificación de ganador. Desarrollado en Solidity para Ethereum o redes compatibles con EVM.
 
-- `address payable public beneficiary`: dirección del subastador.
-- `uint public auctionEndTime`: tiempo de finalización de la subasta.
-- `address public highestBidder`: dirección del mejor postor actual.
-- `uint public highestBid`: oferta más alta actual.
-- `mapping(address => uint) public pendingReturns`: mapeo de fondos a devolver.
-- `bool public ended`: indica si la subasta finalizó.
-- `uint public commission`: comisión del 2% para el propietario.
-- `uint public duration`: duración de la subasta en minutos.
-- `Offer[] public offers`: arreglo de ofertas realizadas.
+---
 
-## 3. Funciones principales
+## 📦 Contenido
 
-- `constructor(uint _durationMinutes)`: inicializa el contrato con duración en minutos.
-- `bid() public payable`: permite realizar una oferta, debe superar la anterior en al menos un 5%.
-- `withdrawPartialRefund() public`: permite retirar los fondos ofrecidos si el usuario no es el mejor postor.
-- `endAuction() public`: finaliza la subasta, transfiere los fondos al beneficiario y distribuye reembolsos.
-- `getAllOffers() public view returns (Offer[] memory)`: retorna todas las ofertas registradas.
+- [Variables](#-variables)
+- [Funciones](#-funciones)
+- [Eventos](#-eventos)
 
-## 4. Lógica de actualización de la mejor oferta
+---
 
-Cada vez que se llama a `bid()`, se verifica que el nuevo monto ofrecido supere en al menos un 5% a la oferta actual. Si es así, se actualiza `highestBid` y `highestBidder`. La oferta anterior se registra en `pendingReturns` para que el oferente pueda retirarla luego.
+## 🔧 Variables
 
-## 5. Condiciones de finalización de la subasta
+### Públicas
 
-La subasta puede finalizarse manualmente mediante la función `endAuction()` siempre que haya pasado el tiempo de duración definido en el constructor. Solo puede finalizarse una vez.
+- `address public owner`  
+  Dirección del creador del contrato.
 
-## 6. Gestión del envío de fondos
+- `uint public auctionEndTime`  
+  Marca de tiempo (timestamp) en la que finaliza la subasta.
 
-- El mejor postor no puede retirar su oferta.
-- Al finalizar la subasta, se transfiere el 98% del monto al beneficiario (`beneficiary.transfer(...)`) y el 2% queda como comisión.
-- Las demás ofertas quedan disponibles para ser retiradas por los respectivos usuarios mediante `withdrawPartialRefund()`.
+- `uint public highestBid`  
+  Oferta actual más alta.
 
-## 7. Validaciones realizadas
+- `address public highestBidder`  
+  Dirección del postor con la oferta más alta.
 
-- No se permite ofertar si la subasta terminó.
-- La oferta debe ser mayor en al menos un 5% respecto a la anterior.
-- No se puede finalizar dos veces la subasta.
-- Solo pueden retirarse fondos que no correspondan al mejor postor.
+- `bool public auctionEnded`  
+  Indica si la subasta fue finalizada.
 
+- `mapping(address => uint) public bids`  
+  Almacena las ofertas activas de cada postor.
+
+- `mapping(address => uint[]) public previousOffers`  
+  Historial de ofertas anteriores por postor.
+
+- `mapping(address => uint) public pendingReturns`  
+  Montos que los postores pueden retirar.
+
+- `address[] public bidders`  
+  Lista de todas las direcciones que participaron.
+
+### Constantes
+
+- `uint constant EXTENSION_TIME = 10 minutes`  
+  Tiempo adicional si una oferta ocurre cerca del fin.
+
+- `uint constant COMMISSION_PERCENT = 2`  
+  Comisión (%) para el owner sobre la oferta ganadora.
+
+---
+
+## ⚙️ Funciones
+
+### Constructor
+
+```solidity
+constructor(uint _durationMinutes) payable
+````
+
+Inicializa la subasta con duración en minutos. La primera oferta debe enviarse con `msg.value` por parte del `owner`.
+
+---
+
+### Funciones principales
+
+* `function bid() external payable`
+  Realiza una oferta. Debe superar al menos un 5% la oferta más alta actual. Guarda historial y extiende el tiempo si es necesario.
+
+* `function withdrawExcess() external`
+  Permite al usuario retirar ofertas anteriores que hayan sido superadas.
+
+* `function endAuction() external onlyAfterEnd onlyOwner`
+  Finaliza la subasta, envía fondos al owner y reembolsa al resto.
+
+---
+
+### Consultas
+
+* `function getWinner() external view returns (address, uint)`
+  Devuelve el postor actual ganador y su oferta.
+
+* `function getTime() external view returns(uint)`
+  Retorna el tiempo restante en segundos.
+
+* `function getAllOffers() external view returns (address[] memory, uint[] memory)`
+  Retorna todos los postores y sus ofertas actuales.
+
+* `function getPreviousOffers(address bidder) external view returns (uint[] memory)`
+  Devuelve el historial de ofertas previas para una dirección específica.
+
+---
+
+### Manejo de ETH directo
+
+* `receive() external payable`
+  Si se intenta enviar ETH sin interactuar con funciones, revierte la transacción con un error.
+
+---
+
+## 📢 Eventos
+
+* `event NewBid(address indexed bidder, uint amount)`
+  Emitido cuando se realiza una nueva oferta válida.
+
+* `event AuctionExtended(uint newEndTime)`
+  Emitido cuando se extiende el tiempo de la subasta.
+
+* `event Withdraw(address indexed user, uint amount)`
+  Emitido cuando un usuario retira ETH de ofertas anteriores.
+
+* `event AuctionEnded(address winner, uint amount)`
+  Emitido al finalizar exitosamente la subasta.
+
+---
+
+## 🛡️ Modificadores
+
+* `onlyOwner`
+  Restringe el uso de funciones al creador del contrato.
+
+* `onlyWhileOpen`
+  Asegura que la subasta esté activa.
+
+* `onlyAfterEnd`
+  Asegura que la subasta haya terminado.
+
+---
+
+> 💡 Desarrollado con Solidity ^0.8.20
+
+```
+```

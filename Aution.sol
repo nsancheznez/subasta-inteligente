@@ -1,137 +1,144 @@
 // SPDX-License-Identifier: MIT
-pragma solidity >0.8.20;
+pragma solidity > 0.8.20;
 
 contract Subasta {
 
+    //variables
     address public owner;
     uint public auctionEndTime;
     uint public highestBid;
     address public highestBidder;
 
+    //CONSTANTS
+    uint constant EXTENSION_TIME = 10 minutes;
+    uint constant COMMISSION_PERCENT = 2;
+
+    //mappings
     mapping(address => uint) public bids;
     mapping(address => uint[]) public previousOffers;
     mapping(address => uint) public pendingReturns;
 
     address[] public bidders;
-
     bool public auctionEnded;
-
-    uint constant EXTENSION_TIME = 10 minutes;
-
+    
+    //events
     event NewBid(address indexed bidder, uint amount);
-    event AuctionExtended(uint newEndTime);
     event AuctionEnded(address winner, uint amount);
-    event PartialRefundWithdrawn(address bidder, uint amount);
+    event AuctionExtended(uint newEndTime);
+    event Withdraw(address indexed user, uint amount);
+
+    //modifiers
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Solo el owner puede ejecutar esto");
+        _;
+    }
 
     modifier onlyWhileOpen() {
         require(block.timestamp < auctionEndTime, "Subasta finalizada");
         _;
     }
 
-    modifier onlyWhileActive() {
-        require(block.timestamp < auctionEndTime, "La subasta ya finalizo");
-        _;
-    }
-
     modifier onlyAfterEnd() {
-        require(block.timestamp >= auctionEndTime, "La subasta aun esta activa");
+        require(block.timestamp >= auctionEndTime, "Subasta aun activa");
         _;
     }
 
-    modifier onlyNotHighest() {
-        require(msg.sender != highestBidder, "El ganador no puede retirar fondos aun");
-        _;
-    }
-
-    constructor(uint _durationMinutes) {
+    //constructor
+    constructor(uint _durationMinutes) payable {
         owner = msg.sender;
         auctionEndTime = block.timestamp + (_durationMinutes * 1 minutes);
+        highestBid = msg.value;
+        highestBidder = msg.sender;
+        bids[msg.sender] = msg.value;
+        bidders.push(msg.sender);
+        emit NewBid(msg.sender, msg.value);
     }
 
+    //functions
+    //ofertar
     function bid() external payable onlyWhileOpen {
         require(msg.value > 0, "Debes enviar un valor mayor a 0");
 
         uint newBidAmount = bids[msg.sender] + msg.value;
+        require(newBidAmount >= highestBid + (highestBid * 5) / 100, "Oferta debe superar al menos 5%");
 
-        // Primera oferta
-        if (highestBid == 0) {
-            require(newBidAmount > 0, "La oferta debe ser mayor que cero");
-        } else {
-            require(newBidAmount >= highestBid + (highestBid * 5) / 100, "Oferta debe superar la mejor en al menos 5%");
-        }
-
-        // Guardar oferta anterior para reembolso parcial
         if (bids[msg.sender] > 0) {
-            uint previousBid = bids[msg.sender];
-            previousOffers[msg.sender].push(previousBid);
-
-            // Acumular reembolso
-            pendingReturns[msg.sender] += previousBid;
+            previousOffers[msg.sender].push(bids[msg.sender]);
+            pendingReturns[msg.sender] += bids[msg.sender];
         } else {
-            // Nuevo oferente
             bidders.push(msg.sender);
         }
 
         bids[msg.sender] = newBidAmount;
 
-        // Actualizar oferta más alta si corresponde
-        if (newBidAmount > highestBid) {
-            highestBid = newBidAmount;
-            highestBidder = msg.sender;
-        }
+        highestBid = newBidAmount;
+        highestBidder = msg.sender;
 
         emit NewBid(msg.sender, newBidAmount);
-
-        // Extender subasta si queda menos de 10 minutos
+        //falta 10 mins?
         if (auctionEndTime - block.timestamp < EXTENSION_TIME) {
-            auctionEndTime += EXTENSION_TIME;
+            auctionEndTime = block.timestamp + EXTENSION_TIME;
             emit AuctionExtended(auctionEndTime);
         }
     }
-
-    function getAllOffers() external view returns (address[] memory, uint[] memory) {
-        uint[] memory amounts = new uint[](bidders.length);
-        for (uint i = 0; i < bidders.length; i++) {
-            amounts[i] = bids[bidders[i]];
-        }
-        return (bidders, amounts);
+    //devolver excedente de ofertas anteriores
+    function withdrawExcess() external {
+        uint amount = pendingReturns[msg.sender];
+        require(amount > 0, "Nada para retirar");
+        pendingReturns[msg.sender] = 0;
+        (bool sent, ) = payable(msg.sender).call{value: amount}("");
+        require(sent, "Fallo en el retiro");
+        emit Withdraw(msg.sender, amount);
     }
-
-    function endAuction() external onlyAfterEnd {
-        require(!auctionEnded, "La subasta ya fue finalizada");
+    //finalizar subasta
+    function endAuction() external onlyAfterEnd onlyOwner {
+        require(!auctionEnded, "Ya finalizo");
         auctionEnded = true;
 
-        // Reembolsar a todos excepto al ganador
         for (uint i = 0; i < bidders.length; i++) {
             address bidder = bidders[i];
             if (bidder != highestBidder) {
-                uint refund = bids[bidder];
+                uint refund = bids[bidder] + pendingReturns[bidder];
                 if (refund > 0) {
                     bids[bidder] = 0;
-                    payable(bidder).transfer(refund);
+                    pendingReturns[bidder] = 0;
+                    (bool sent, ) = payable(bidder).call{value: refund}("");
+                    require(sent, "Fallo en reembolso");
                 }
             }
         }
 
-        // Comisión 2%
-        uint fee = (highestBid * 2) / 100;
+        uint fee = (highestBid * COMMISSION_PERCENT) / 100;
         uint sellerAmount = highestBid - fee;
 
-        // Transferir al propietario (vendedor)
-        payable(owner).transfer(sellerAmount);
+        (bool sentToOwner, ) = payable(owner).call{value: sellerAmount}("");
+        require(sentToOwner, "Fallo al enviar fondos al owner");
 
         emit AuctionEnded(highestBidder, highestBid);
     }
+    //ver quien va ganando
+    function getWinner() external view  returns (address, uint) {
+        return (highestBidder, highestBid);
+    }
+    //ver tiempo
+    function getTime() external view returns(uint){
+        return (auctionEndTime - block.timestamp);
+    }
 
-    function withdrawPartialRefund() external onlyWhileActive onlyNotHighest {
-        uint amount = pendingReturns[msg.sender];
-        require(amount > 0, "No hay fondos pendientes para retirar");
-
-        pendingReturns[msg.sender] = 0;
-
-        (bool sent, ) = payable(msg.sender).call{value: amount}("");
-        require(sent, "Error al realizar el reembolso");
-
-        emit PartialRefundWithdrawn(msg.sender, amount);
+    //ver ofertas
+    function getAllOffers() external view returns (address[] memory, uint[] memory) {
+        uint[] memory offerAmounts = new uint[](bidders.length);
+        for (uint i = 0; i < bidders.length; i++) {
+            offerAmounts[i] = bids[bidders[i]];
+        }
+        return (bidders, offerAmounts);
+    }
+    //ofertas previas
+    function getPreviousOffers(address bidder) external view returns (uint[] memory) {
+        return previousOffers[bidder];
+    }
+    //El contrato recibe ETH sin datos
+    receive() external payable {
+        revert("No se permite enviar ETH directamente");
     }
 }
